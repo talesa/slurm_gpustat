@@ -671,15 +671,56 @@ def all_info(color: int, verbose: bool, partition: (str, NoneType) = None):
     print(divider)
 
 
+@beartype
+def leaderboard(partition: (str, NoneType) = None):
+    """
+    sacct -S2020-11-02-00:00 -E2050-11-02-00:00 --allusers --format user,state,elapsed --noheader --truncate |
+    grep -v 'Conflicting' |
+    awk -f /data/ziz/not-backed-up/software/ziz_toolkit/useful_scripts/slurm_gpu_time_leaderboard.awk |
+    sort -V -r  |
+    awk '{printf "%s|%.1f\n", $2, $1/3600}' |
+    column --table --separator "|" --table-columns USER,"JOB TIME(hrs)" --table-right "JOB TIME(hrs)"
+    """
+    cmd = "sacct -S2020-11-02-00:00 -E2050-11-02-00:00 --allusers --format user%20,state%10,elapsed%20 --noheader --truncate"
+    if partition:
+        cmd += f" --partition={partition}"
+    rows = parse_cmd(cmd)
+    usage_per_user = defaultdict(float)
+
+    p = re.compile(r'(?:(\d+)-)?(\d\d):(\d\d):(\d\d)')
+
+    for row in rows:
+        tokens = row.split()
+        if len(tokens) == 3 and \
+                tokens[2] != '00:00:00' and \
+                tokens[1] in ['CANCELLED+', 'TIMEOUT', 'FAILED', 'RUNNING', 'COMPLETED', 'OUT_OF_ME+']:
+            match = p.search(tokens[2])
+            usage_per_user[tokens[0]] += \
+                float(match.group(1) if match.group(1) is not None else 0.) * 24. + \
+                float(match.group(2)) + \
+                float(match.group(3)) / 60. + \
+                float(match.group(4)) / 60. / 60.
+    usage_per_user = [(v, k) for k, v in usage_per_user.items()]
+    usage_per_user.sort(reverse=True)
+
+    data_to_print = []
+    for time, user in usage_per_user:
+        data_to_print.append(f'{user}|{time:.1f}')
+    data_to_print = "\n".join(data_to_print)
+    output = subprocess.check_output(f'echo "{data_to_print}" | column --table --separator "|" --table-columns USER,"JOB TIME(hrs)" --table-right "JOB TIME(hrs)"', shell=True).decode("utf-8")
+    print(output)
+
+
 def main():
     parser = argparse.ArgumentParser(description="slurm_gpus tool")
-    parser.add_argument("--action", default="current",
-                        choices=["current", "history", "daemon-start", "daemon-stop"],
+    parser.add_argument("-a", "--action", default="current",
+                        choices=["current", "history", "daemon-start", "daemon-stop", "leaderboard"],
                         help=("The function performed by slurm_gpustat: `current` will"
                               " provide a summary of current usage, 'history' will "
                               "provide statistics from historical data (provided that the"
                               "logging daemon has been running). 'daemon-start' and"
-                              "'daemon-stop' will start and stop the daemon, resp."))
+                              "'daemon-stop' will start and stop the daemon, resp."
+                              "'leaderboard' will display a GPU consumption leaderboard."))
     parser.add_argument("-p", "--partition", default=None,
                         help="the partition/queue (or multiple, comma separated) of interest. "
                              "By default set to all available partitions.")
@@ -713,6 +754,8 @@ def main():
         elif args.action == "daemon-stop":
             print("Stopping daemon")
             daemon.stop()
+    elif args.action == "leaderboard":
+        leaderboard(partition=args.partition)
 
 
 if __name__ == "__main__":
