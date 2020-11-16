@@ -698,7 +698,7 @@ def leaderboard(partition: (str, NoneType) = None):
     usage_per_user.sort(reverse=True)
 
     data_to_print = ''.join(f'{user}|{time:.1f}\n' for time, user in usage_per_user)
-    output = subprocess.check_output(f'echo "{data_to_print}" | column --table --separator "|" --table-columns USER,"JOB TIME(hrs)" --table-right "JOB TIME(hrs)"', shell=True).decode("utf-8")
+    output = subprocess.check_output(f'echo "{data_to_print}" | column --table --separator "|" --table-columns USER,"GPU-hours" --table-right "GPU-hours"', shell=True).decode("utf-8")
     print(output)
 
 
