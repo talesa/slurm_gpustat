@@ -516,7 +516,16 @@ def gpu_usage(resources: dict, partition: (str, NoneType) = None) -> dict:
     Returns:
         (dict): a summary of resources organised by user (and also by node name).
     """
-    cmd = "squeue -O tres-per-node:100,nodelist:100,username:100,jobid:100 --noheader"
+
+    # Debug the regular expression below at
+    # https://regexr.com/5gdmn
+    p = re.compile(r'(?:[\w-]+) (\d+).(\d+).(\d+)')
+    slurm_version = int(p.match(parse_cmd("sinfo -V")[0]).group(1))
+
+    p = re.compile(r'gres\/gpu=(\d+)')
+
+    tres_field_name = "tres-per-node" if slurm_version >= 18 else "tres"
+    cmd = f"squeue -O {tres_field_name}:100,nodelist:100,username:100,jobid:100 --noheader"
     if partition:
         cmd += f" --partition={partition}"
     detailed_job_cmd = "scontrol show jobid -dd %s"
@@ -525,15 +534,24 @@ def gpu_usage(resources: dict, partition: (str, NoneType) = None) -> dict:
     for row in rows:
         tokens = row.split()
         # ignore pending jobs
-        if len(tokens) < 4 or not tokens[0].startswith("gpu"):
+        if len(tokens) < 4:
             continue
         gpu_count_str, node_str, user, jobid = tokens
-        gpu_count_tokens = gpu_count_str.split(":")
-        num_gpus = int(gpu_count_tokens[-1])
-        if len(gpu_count_tokens) == 2:
+        if slurm_version >= 18:
+            if not tokens[0].startswith("gpu"):
+                continue
+            gpu_count_tokens = gpu_count_str.split(":")
+            num_gpus = int(gpu_count_tokens[-1])
+            if len(gpu_count_tokens) == 2:
+                gpu_type = None
+            elif len(gpu_count_tokens) == 3:
+                gpu_type = gpu_count_tokens[1]
+        else:
+            num_gpus_search = p.search(gpu_count_str)
+            if num_gpus_search is None:
+                continue
+            num_gpus = int(num_gpus_search.group(1))
             gpu_type = None
-        elif len(gpu_count_tokens) == 3:
-            gpu_type = gpu_count_tokens[1]
         # get detailed job information, to check if using bash
         detailed_output = parse_cmd(detailed_job_cmd % jobid, split=False)
         is_bash = any([f'Command={x}\n' in detailed_output for x in INTERACTIVE_CMDS])
